@@ -1,23 +1,25 @@
 import os
 import zipfile
+import shutil
 
 # 📌 Configuration
 SOURCE_DIR = "./python"  # Dossier contenant les dépendances
+OUTPUT_DIR = "./packages"  # Dossier où seront créés les sous-dossiers et ZIP
 ZIP_PREFIX = "lambda_part"  # Nom des fichiers ZIP
-MAX_SIZE_MB = 45  # Taille maximale par ZIP
-MAX_SIZE_BYTES = MAX_SIZE_MB * 1024 * 1024  # Conversion en octets
+MIN_SIZE_MB = 40  # Taille minimale d'un ZIP
+MAX_SIZE_MB = 45  # Taille maximale d'un ZIP
+MIN_SIZE_BYTES = MIN_SIZE_MB * 1024 * 1024
+MAX_SIZE_BYTES = MAX_SIZE_MB * 1024 * 1024
 
-def create_zip(parts, files):
-    """Crée un fichier ZIP contenant une liste de fichiers."""
-    zip_name = f"{ZIP_PREFIX}{parts}.zip"
-    with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED) as zipf:
-        for file in files:
-            arcname = os.path.relpath(file, SOURCE_DIR)  # Nom relatif
-            zipf.write(file, arcname)
-    print(f"✅ Créé : {zip_name} ({os.path.getsize(zip_name) / (1024*1024):.2f} MB)")
+def create_zip(folder, zip_name):
+    """Créer un fichier ZIP à partir d'un dossier."""
+    zip_path = os.path.join(OUTPUT_DIR, zip_name)
+    shutil.make_archive(zip_path, 'zip', folder)
+    size = os.path.getsize(zip_path + ".zip") / (1024 * 1024)
+    print(f"✅ Créé : {zip_path}.zip ({size:.2f} MB)")
 
 def split_and_zip():
-    """Divise les fichiers en plusieurs ZIP de taille max 45 Mo."""
+    """Divise les fichiers en sous-dossiers et les zippe."""
     all_files = []
     
     # Récupérer tous les fichiers à zipper
@@ -25,28 +27,36 @@ def split_and_zip():
         for file in files:
             all_files.append(os.path.join(root, file))
 
-    # Diviser en parties
-    parts = 1
+    if not os.path.exists(OUTPUT_DIR):
+        os.makedirs(OUTPUT_DIR)
+
+    part_num = 1
     current_size = 0
     current_files = []
+    current_folder = os.path.join(OUTPUT_DIR, f"part{part_num}")
+
+    if not os.path.exists(current_folder):
+        os.makedirs(current_folder)
 
     for file in all_files:
         file_size = os.path.getsize(file)
-        
-        # Si ajouter ce fichier dépasse la taille, on crée un ZIP et on recommence
-        if current_size + file_size > MAX_SIZE_BYTES:
-            create_zip(parts, current_files)
-            parts += 1
-            current_files = []
+
+        # Si le fichier actuel dépasse la limite, on crée un ZIP et on passe au suivant
+        if current_size + file_size > MAX_SIZE_BYTES and current_size >= MIN_SIZE_BYTES:
+            create_zip(current_folder, f"{ZIP_PREFIX}{part_num}")
+            part_num += 1
+            current_folder = os.path.join(OUTPUT_DIR, f"part{part_num}")
+            os.makedirs(current_folder)
             current_size = 0
-        
-        # Ajouter le fichier à la liste
-        current_files.append(file)
+            current_files = []
+
+        # Déplacer le fichier dans le dossier en cours
+        shutil.move(file, os.path.join(current_folder, os.path.basename(file)))
         current_size += file_size
 
-    # Si des fichiers restent, créer le dernier ZIP
-    if current_files:
-        create_zip(parts, current_files)
+    # Si des fichiers restent, on les zippe aussi
+    if current_size > 0:
+        create_zip(current_folder, f"{ZIP_PREFIX}{part_num}")
 
 # 📌 Exécuter la fonction
 split_and_zip()
