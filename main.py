@@ -2,82 +2,95 @@ import os
 import shutil
 
 # 📌 Configuration
-SOURCE_DIR = "./python"  # Dossier contenant les dépendances
-OUTPUT_DIR = "./packages"  # Dossier où seront créés les sous-dossiers et ZIP
+SOURCE_DIR = "./pasck"  # Dossier contenant les sous-dossiers à traiter (main1, main2, ...)
+OUTPUT_DIR = "./packages"  # Dossier où seront créés les fichiers ZIP
 ZIP_PREFIX = "lambda_part"  # Nom des fichiers ZIP
 MIN_SIZE_MB = 100  # Taille minimale d'un ZIP (en Mo)
 MAX_SIZE_MB = 110  # Taille maximale d'un ZIP (en Mo)
 MIN_SIZE_BYTES = MIN_SIZE_MB * 1024 * 1024
 MAX_SIZE_BYTES = MAX_SIZE_MB * 1024 * 1024
 
+def move_folder(src_folder, dest_folder):
+    """Déplace un dossier et son contenu sans supprimer le dossier source."""
+    if not os.path.exists(dest_folder):
+        os.makedirs(dest_folder)
+
+    # Parcours tous les fichiers et dossiers du dossier source
+    for item in os.listdir(src_folder):
+        source_item = os.path.join(src_folder, item)
+        destination_item = os.path.join(dest_folder, item)
+
+        if os.path.isdir(source_item):
+            # Si c'est un sous-dossier, on le déplace aussi
+            shutil.move(source_item, destination_item)
+        else:
+            # Si c'est un fichier, on le déplace
+            shutil.move(source_item, destination_item)
+
 def create_zip(folder, zip_name):
     """Créer un fichier ZIP à partir d'un dossier."""
     zip_path = os.path.join(OUTPUT_DIR, zip_name)
     shutil.make_archive(zip_path, 'zip', folder)
     size = os.path.getsize(zip_path + ".zip") / (1024 * 1024)
-    print(f"✅ Créé : {zip_path}.zip ({size:.2f} MB)")
+    print(f"✅ Créé : {zip_path}.zip ({size:.2f} Mo)")
 
-def split_and_zip():
-    """Divise les fichiers en sous-dossiers et les zippe."""
-    all_files = []
-    
-    # Récupérer tous les fichiers à zipper
-    for root, _, files in os.walk(SOURCE_DIR):
-        for file in files:
-            all_files.append(os.path.join(root, file))
+def check_and_move_folders():
+    """Vérifie les sous-dossiers, les regroupe et les compresse si la taille est correcte."""
+    all_main_folders = []
 
-    if not os.path.exists(OUTPUT_DIR):
-        os.makedirs(OUTPUT_DIR)
+    # Récupérer tous les sous-dossiers (main1, main2, etc.)
+    for root, dirs, _ in os.walk(SOURCE_DIR):
+        for dir_name in dirs:
+            dir_path = os.path.join(root, dir_name)
+            total_size = 0
 
-    part_num = 1
+            # Calculer la taille totale du dossier
+            for dirpath, dirnames, filenames in os.walk(dir_path):
+                for filename in filenames:
+                    file_path = os.path.join(dirpath, filename)
+                    total_size += os.path.getsize(file_path)
+
+            all_main_folders.append((dir_name, dir_path, total_size))
+
     current_size = 0
-    current_files = []
-    current_folder = os.path.join(OUTPUT_DIR, f"part{part_num}")
+    current_folders = []
+    part_num = 1
 
-    if not os.path.exists(current_folder):
-        os.makedirs(current_folder)
-
-    for file in all_files:
-        file_size = os.path.getsize(file)
-
-        # Vérifie si ajouter ce fichier respecte les limites de taille
-        if current_size + file_size <= MAX_SIZE_BYTES:
-            # Ajouter le fichier au dossier en cours
-            shutil.move(file, os.path.join(current_folder, os.path.basename(file)))
-            current_size += file_size
+    for dir_name, dir_path, size in all_main_folders:
+        if current_size + size <= MAX_SIZE_BYTES:
+            # Ajouter ce dossier à la combinaison en cours
+            current_folders.append((dir_name, dir_path))
+            current_size += size
         else:
-            # Si la taille actuelle est entre 100 Mo et 110 Mo, on compresse et recommence
-            if current_size >= MIN_SIZE_BYTES:
-                create_zip(current_folder, f"{ZIP_PREFIX}{part_num}")
+            # Si la taille combinée atteint ou dépasse 100 Mo, créer un ZIP
+            if MIN_SIZE_BYTES <= current_size <= MAX_SIZE_BYTES:
+                # Créer un dossier temporaire pour les dossiers à compresser
+                temp_folder = os.path.join(OUTPUT_DIR, f"temp_part{part_num}")
+                if not os.path.exists(temp_folder):
+                    os.makedirs(temp_folder)
+
+                # Déplacer les dossiers dans le dossier temporaire
+                for _, folder_path in current_folders:
+                    move_folder(folder_path, temp_folder)
+
+                # Créer un fichier ZIP avec les dossiers déplacés
+                create_zip(temp_folder, f"{ZIP_PREFIX}{part_num}")
+
+                # Nettoyer et passer à la combinaison suivante
                 part_num += 1
-                current_folder = os.path.join(OUTPUT_DIR, f"part{part_num}")
-                os.makedirs(current_folder)
-                current_size = 0
-                shutil.move(file, os.path.join(current_folder, os.path.basename(file)))
-                current_size += file_size
-            else:
-                # Si la taille est inférieure à 100 Mo, il faut essayer d'ajouter des fichiers
-                remaining_files = all_files[all_files.index(file):]
-                remaining_size = current_size
+                current_folders = [(dir_name, dir_path)]  # Démarre une nouvelle combinaison avec le dossier actuel
+                current_size = size
 
-                # Ajouter des fichiers supplémentaires pour atteindre la taille minimale
-                for next_file in remaining_files:
-                    next_file_size = os.path.getsize(next_file)
-                    if remaining_size + next_file_size <= MAX_SIZE_BYTES:
-                        shutil.move(next_file, os.path.join(current_folder, os.path.basename(next_file)))
-                        remaining_size += next_file_size
+    # Si des dossiers restent dans current_folders, les compresser aussi
+    if MIN_SIZE_BYTES <= current_size <= MAX_SIZE_BYTES:
+        temp_folder = os.path.join(OUTPUT_DIR, f"temp_part{part_num}")
+        if not os.path.exists(temp_folder):
+            os.makedirs(temp_folder)
 
-                # Compresser même si on n'atteint pas exactement 110 Mo
-                create_zip(current_folder, f"{ZIP_PREFIX}{part_num}")
-                part_num += 1
-                current_folder = os.path.join(OUTPUT_DIR, f"part{part_num}")
-                os.makedirs(current_folder)
-                current_size = 0
-                break  # sortir de la boucle après avoir compressé le dossier
+        for _, folder_path in current_folders:
+            move_folder(folder_path, temp_folder)
 
-    # Si des fichiers restent, on les zippe aussi
-    if current_size >= MIN_SIZE_BYTES:
-        create_zip(current_folder, f"{ZIP_PREFIX}{part_num}")
+        create_zip(temp_folder, f"{ZIP_PREFIX}{part_num}")
 
 # 📌 Exécuter la fonction
-split_and_zip()
+check_and_move_folders()
